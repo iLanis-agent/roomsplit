@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoomSplit - fair rent for unequal rooms</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#121016; color:#ece9f2; min-height:100vh; }
+  .wrap { max-width:860px; margin:0 auto; padding:28px 20px 80px; }
+  header { display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; }
+  header h1 { font-size:22px; } header h1 span { color:#c9a6f2; }
+  header a { color:#8d8798; text-decoration:none; font-size:14px; }
+  .card { background:#1a1622; border:1px solid #332b44; border-radius:12px; padding:18px; margin-bottom:18px; }
+  label { font-size:12px; color:#8d8798; display:block; margin-bottom:4px; }
+  input[type=text], input[type=number] { background:#121016; border:1px solid #453a5c; border-radius:8px; color:#ece9f2; padding:8px 10px; font-size:14px; width:100%; }
+  button { background:#c9a6f2; border:none; color:#1d1030; font-weight:700; padding:11px 22px; border-radius:9px; font-size:14px; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid #453a5c; color:#c9a6f2; padding:8px 14px; font-size:13px; }
+  .toprow { display:grid; grid-template-columns:200px auto; gap:12px; align-items:end; margin-bottom:6px; }
+  .room { background:#121016; border:1px solid #2c2440; border-radius:10px; padding:12px; margin-bottom:10px; }
+  .roomgrid { display:grid; grid-template-columns:2fr 1fr auto; gap:10px; align-items:end; }
+  .feats { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; }
+  .feats label { display:flex; align-items:center; gap:6px; font-size:13px; color:#b8b2c4; margin:0; cursor:pointer; }
+  .verdict { background:#1d1530; border:1px solid #453a5c; border-radius:10px; padding:14px 16px; margin-bottom:14px; font-size:15px; line-height:1.6; }
+  .verdict b { color:#c9a6f2; }
+  .bar-row { display:grid; grid-template-columns:150px 1fr 90px 110px; gap:10px; align-items:center; margin-bottom:8px; font-size:13px; }
+  .bar-track { background:#121016; border-radius:6px; height:22px; overflow:hidden; }
+  .bar-fill { background:#7a5cb8; height:100%; border-radius:6px; }
+  .delta { font-size:12px; }
+  .up { color:#ff9a9a; } .down { color:#7ed99a; }
+  .err { color:#ff8a8a; font-size:13px; margin-top:8px; }
+  .note { color:#655e70; font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Room<span>Split</span></h1><a href="index.html">home</a></header>
+
+  <div class="card">
+    <div class="toprow">
+      <div><label>Total rent ($/mo)</label><input id="rent" type="number" value="3000"></div>
+      <div><button id="go">Split it</button></div>
+    </div>
+    <div class="note">Feature premiums: private bath +15%, balcony +10%, good light +8%, quiet +7% of the room's size points.</div>
+  </div>
+
+  <div id="rooms"></div>
+  <div style="margin-bottom:18px;"><button class="ghost" id="add">+ add room</button></div>
+  <div class="err" id="err"></div>
+  <div id="out"></div>
+</div>
+<script src="engine.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const FEATS = [['bath','private bath'],['balcony','balcony'],['light','good light'],['quiet','quiet']];
+  let rooms = [
+    { name: 'Master', sqm: 18, bath: true, balcony: false, light: true, quiet: false },
+    { name: 'Middle', sqm: 12, bath: false, balcony: false, light: true, quiet: true },
+    { name: 'Small', sqm: 9, bath: false, balcony: false, light: false, quiet: false }
+  ];
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function usd(x){ return '$' + Math.round(x).toLocaleString('en-US'); }
+
+  function render(){
+    $('rooms').innerHTML = rooms.map(function(r, i){
+      return '<div class="room"><div class="roomgrid">'
+        + '<div><label>Room name</label><input type="text" data-i="' + i + '" data-k="name" value="' + esc(r.name) + '"></div>'
+        + '<div><label>Size (sqm)</label><input type="number" step="0.5" data-i="' + i + '" data-k="sqm" value="' + r.sqm + '"></div>'
+        + '<div>' + (rooms.length > 1 ? '<button class="ghost" data-del="' + i + '">remove</button>' : '') + '</div>'
+        + '</div><div class="feats">'
+        + FEATS.map(function(f){ return '<label><input type="checkbox" data-i="' + i + '" data-k="' + f[0] + '"' + (r[f[0]] ? ' checked' : '') + '> ' + f[1] + '</label>'; }).join('')
+        + '</div></div>';
+    }).join('');
+  }
+
+  function collect(){
+    document.querySelectorAll('#rooms input').forEach(function(el){
+      const i = +el.dataset.i, k = el.dataset.k;
+      if (el.type === 'checkbox') rooms[i][k] = el.checked;
+      else if (k === 'name') rooms[i][k] = el.value;
+      else rooms[i][k] = el.value;
+    });
+  }
+
+  function calc(){
+    collect();
+    $('err').textContent = '';
+    try { localStorage.setItem('roomsplit', JSON.stringify({ rent: $('rent').value, rooms: rooms })); } catch(e) {}
+    let s;
+    try { s = RoomSplitEngine.split({ totalRent: $('rent').value, rooms: rooms }); }
+    catch(e) { $('err').textContent = e.message; $('out').innerHTML = ''; return; }
+
+    const maxRent = Math.max.apply(null, s.rooms.map(function(r){ return r.rent; }));
+    const v = 'Even split would be <b>' + usd(s.evenSplit) + '</b> each. Fair split ranges from <b>' + usd(Math.min.apply(null, s.rooms.map(function(r){return r.rent;})))
+      + '</b> to <b>' + usd(maxRent) + '</b> - a spread of ' + usd(s.spread) + ' a month, or ' + usd(s.spread * 12) + ' a year, for the same apartment.';
+
+    const bars = s.rooms.map(function(r){
+      const pct = maxRent > 0 ? (r.rent / maxRent * 100) : 0;
+      const d = r.deltaVsEven;
+      const dTxt = (d >= 0 ? '+' : '') + usd(d).replace('$-', '-$');
+      return '<div class="bar-row"><div>' + esc(r.name) + ' <span style="color:#655e70">(' + r.sqm + ' sqm' + (r.features.length ? ', ' + r.features.join(', ') : '') + ')</span></div>'
+        + '<div class="bar-track"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>'
+        + '<div><b>' + usd(r.rent) + '</b></div>'
+        + '<div class="delta ' + (d > 0.5 ? 'up' : d < -0.5 ? 'down' : '') + '">' + dTxt + ' vs even</div></div>';
+    }).join('');
+
+    $('out').innerHTML = '<div class="verdict">' + v + '</div><div class="card">' + bars
+      + '<div class="note">Shares by size plus feature premiums; rounded to whole dollars, sum exact (' + usd(s.sumCheck) + ').</div></div>';
+  }
+
+  $('rooms').addEventListener('click', function(e){
+    const del = e.target.dataset && e.target.dataset.del;
+    if (del !== undefined) { collect(); rooms.splice(+del, 1); render(); calc(); }
+  });
+  $('rooms').addEventListener('input', calc);
+  $('add').onclick = function(){
+    collect();
+    if (rooms.length >= 8) { $('err').textContent = 'rooms must have 1 to 8 entries'; return; }
+    rooms.push({ name: 'Room ' + (rooms.length + 1), sqm: 10, bath: false, balcony: false, light: false, quiet: false });
+    render(); calc();
+  };
+  $('go').onclick = calc;
+  $('rent').addEventListener('input', calc);
+
+  try {
+    const st = JSON.parse(localStorage.getItem('roomsplit') || 'null');
+    if (st && Array.isArray(st.rooms) && st.rooms.length) { rooms = st.rooms; $('rent').value = st.rent; }
+  } catch(e) {}
+  render();
+  calc();
+})();
+</script>
+</body>
+</html>
